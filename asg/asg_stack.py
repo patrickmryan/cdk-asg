@@ -1,12 +1,17 @@
 import sys
+from os.path import join
+
 from aws_cdk import (
     Duration,
     Stack,
     aws_ec2 as ec2,
     aws_iam as iam,
     aws_autoscaling as autoscaling,
+    aws_autoscaling_hooktargets as hooktargets,
     aws_elasticloadbalancingv2 as elbv2,
     aws_elasticloadbalancingv2_targets as elbv2targets,
+    aws_lambda as _lambda,
+    aws_logs as logs,
 )
 from constructs import Construct
 import boto3
@@ -122,6 +127,70 @@ systemctl start httpd
         listener.add_targets("WebServers", port=80, targets=[asg])
 
         # scaling topic(s)
+
+        # setting for all python Lambda functions
+        lambda_root = "lambdas"
+        runtime = _lambda.Runtime.PYTHON_3_9
+        log_retention = logs.RetentionDays.ONE_WEEK
+        lambda_principal = iam.ServicePrincipal("lambda.amazonaws.com")
+        basic_lambda_policy = iam.ManagedPolicy.from_aws_managed_policy_name(
+            "service-role/AWSLambdaBasicExecutionRole"
+        )
+        managed_policies = [basic_lambda_policy]
+        lambda_role = iam.Role(
+            self,
+            "LaunchingHookRole",
+            assumed_by=lambda_principal,
+            managed_policies=managed_policies,
+            inline_policies={
+                "complete": iam.PolicyDocument(
+                    assign_sids=True,
+                    statements=[
+                        iam.PolicyStatement(
+                            actions=["autoscaling:CompleteLifecycleAction"],
+                            effect=iam.Effect.ALLOW,
+                            resources=[asg.auto_scaling_group_arn],
+                        )
+                    ],
+                )
+            },
+        )
+
+        launching_hook_lambda = _lambda.Function(
+            self,
+            "LaunchingHook",
+            runtime=runtime,
+            code=_lambda.Code.from_asset(join(lambda_root, "launching_hook")),
+            handler="launching_hook.lambda_handler",
+            timeout=Duration.seconds(60),
+            role=lambda_role,
+            log_retention=log_retention,
+        )
+
+        asg.add_lifecycle_hook(
+            id="LaunchingHook",
+            lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
+            default_result=autoscaling.DefaultResult.ABANDON,
+            heartbeat_timeout=Duration.minutes(5),
+            lifecycle_hook_name="LaunchingHook",
+            notification_target=hooktargets.FunctionHook(launching_hook_lambda),
+            # role=asg_topic_pub_role,
+        )
+
+        # lifecycle_hook = autoscaling.LifecycleHook(
+        #     self,
+        #     "Launching",
+        #     auto_scaling_group=asg,
+        #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
+        #     # the properties below are optional
+        #     default_result=autoscaling.DefaultResult.CONTINUE,
+        #     # heartbeat_timeout=cdk.Duration.minutes(30),
+        #     # lifecycle_hook_name="lifecycleHookName",
+        #     # notification_metadata="notificationMetadata",
+        #     notification_target=launching_hook_lambda,
+        #     # role=role
+        # )
+
         # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.aws_autoscaling/LifecycleHook.html
 
         # event rules
