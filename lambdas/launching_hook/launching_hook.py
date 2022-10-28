@@ -29,10 +29,9 @@ def lambda_handler(event, context):
 
     response = ec2_client.describe_instances(InstanceIds=[instance_id])
     inst_details = response["Reservations"][0]["Instances"][0]
+    az = inst_details["Placement"]["AvailabilityZone"]
 
-    new_name = "web_" + re.sub(
-        r"\.", "_", inst_details["PrivateIpAddress"]
-    )  # + f"_{az}"
+    new_name = "web_" + re.sub(r"\.", "_", inst_details["PrivateIpAddress"]) + f"_{az}"
     update_name_tag(ec2_client=ec2_client, instance_id=instance_id, name_tag=new_name)
 
     params = event.copy()
