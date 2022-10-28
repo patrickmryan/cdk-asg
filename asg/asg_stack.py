@@ -12,6 +12,8 @@ from aws_cdk import (
     aws_elasticloadbalancingv2_targets as elbv2targets,
     aws_lambda as _lambda,
     aws_logs as logs,
+    aws_events as events,
+    aws_events_targets as events_targets,
 )
 from constructs import Construct
 import boto3
@@ -20,6 +22,28 @@ import boto3
 class AsgStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        permissions_boundary_policy_arn = self.node.try_get_context(
+            "PermissionsBoundaryPolicyArn"
+        )
+        if not permissions_boundary_policy_arn:
+            permissions_boundary_policy_name = self.node.try_get_context(
+                "PermissionsBoundaryPolicyName"
+            )
+            if permissions_boundary_policy_name:
+                permissions_boundary_policy_arn = self.format_arn(
+                    service="iam",
+                    region="",
+                    account=self.account,
+                    resource="policy",
+                    resource_name=permissions_boundary_policy_name,
+                )
+
+        if permissions_boundary_policy_arn:
+            policy = iam.ManagedPolicy.from_managed_policy_arn(
+                self, "PermissionsBoundary", permissions_boundary_policy_arn
+            )
+            iam.PermissionsBoundary.of(self).apply(policy)
 
         self.ec2_resource = boto3.resource("ec2")
 
@@ -83,14 +107,17 @@ systemctl start httpd
         vpc_resource = self.ec2_resource.Vpc(vpc_id)
 
         subnets = self.get_subnets_tagged(
-            vpc=vpc_resource, tag_key="CWALL_ROLE", tag_value="ECHO"
+            vpc=vpc_resource, tag_key="SubnetType", tag_value="private"
         )
+
+        asg_name = "asg-" + self.stack_name
 
         # ASG
         asg = autoscaling.AutoScalingGroup(
             self,
             "ASG",
             vpc=vpc,
+            auto_scaling_group_name=asg_name,
             launch_template=template,
             # associate_public_ip_address
             # group_metrics
@@ -105,16 +132,16 @@ systemctl start httpd
         )
 
         # ALB
-        subnets = self.get_subnets_tagged(
-            vpc=vpc_resource, tag_key="CWALL_ROLE", tag_value="EGRESS"
-        )
+        # subnets = self.get_subnets_tagged(
+        #     vpc=vpc_resource, tag_key="SubnetType", tag_value="private"
+        # )
 
         alb = elbv2.ApplicationLoadBalancer(
             self,
             "ALB",
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnets=subnets),
-            internet_facing=True,
+            internet_facing=False,
         )
         listener = alb.add_listener(
             "Listener",
@@ -167,34 +194,46 @@ systemctl start httpd
             log_retention=log_retention,
         )
 
-        asg.add_lifecycle_hook(
-            id="LaunchingHook",
-            lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
-            default_result=autoscaling.DefaultResult.ABANDON,
-            heartbeat_timeout=Duration.minutes(5),
-            lifecycle_hook_name="LaunchingHook",
-            notification_target=hooktargets.FunctionHook(launching_hook_lambda),
-            # role=asg_topic_pub_role,
+        # asg.add_lifecycle_hook(
+        #     id="LaunchingHook",
+        #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
+        #     default_result=autoscaling.DefaultResult.ABANDON,
+        #     heartbeat_timeout=Duration.minutes(5),
+        #     lifecycle_hook_name="LaunchingHook",
+        #     notification_target=hooktargets.FunctionHook(launching_hook_lambda),
+        #     # role=asg_topic_pub_role,
+        # )
+
+        launching_rule = events.Rule(
+            self,
+            "LaunchingHookRule",
+            event_pattern=events.EventPattern(
+                source=["aws.autoscaling"],
+                detail={
+                    "LifecycleTransition": ["autoscaling:EC2_INSTANCE_LAUNCHING"],
+                    "AutoScalingGroupName": [asg_name],
+                },
+            ),
+            targets=[events_targets.LambdaFunction(launching_hook_lambda)],
         )
 
-        # lifecycle_hook = autoscaling.LifecycleHook(
-        #     self,
-        #     "Launching",
+        # lifecycle_hook = autoscaling.LifecycleHook(self, "InstanceLaunchingHook",
         #     auto_scaling_group=asg,
         #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
+
         #     # the properties below are optional
-        #     default_result=autoscaling.DefaultResult.CONTINUE,
+        #     default_result=autoscaling.DefaultResult.ABANDON,
         #     # heartbeat_timeout=cdk.Duration.minutes(30),
         #     # lifecycle_hook_name="lifecycleHookName",
         #     # notification_metadata="notificationMetadata",
-        #     notification_target=launching_hook_lambda,
+        #     notification_target=lifecycle_hook_target,
         #     # role=role
         # )
 
-        # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.aws_autoscaling/LifecycleHook.html
+        # make sure the rules are deploed before the ASG
+        # asg.node.add_dependency(launching_rule)
 
-        # event rules
-        # lambdas attached to rules(super basic)
+        # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.aws_autoscaling/LifecycleHook.html
 
     def get_subnets_tagged(self, vpc=None, tag_key=None, tag_value=None):
 

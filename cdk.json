@@ -15,8 +15,9 @@
     ]
   },
   "context": {
-    "VpcId": "vpc-07085ed6967096e52",
-    "KeyName": "pmr-iamadmin-use1",
+    "VpcId": "vpc-0a4848826921a0683",
+    "KeyName": "pmr-dice-useast1",
+    "PermissionsBoundaryPolicyName": "T_PROJADMIN_U",
 
     "@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId": true,
     "@aws-cdk/core:stackRelativeExports": true,
