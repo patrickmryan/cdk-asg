@@ -25,24 +25,59 @@ def lambda_handler(event, context):
     ec2_client = boto3.client("ec2")
     autoscaling = boto3.client("autoscaling")
 
-    instance_id = event["instance_id"]
+    for record in event["Records"]:
 
-    response = ec2_client.describe_instances(InstanceIds=[instance_id])
-    inst_details = response["Reservations"][0]["Instances"][0]
-    az = inst_details["Placement"]["AvailabilityZone"]
+        asg_message = json.loads(record["Sns"]["Message"])
+        logger.info(json.dumps(asg_message))
 
-    new_name = "web_" + re.sub(r"\.", "_", inst_details["PrivateIpAddress"]) + f"_{az}"
-    update_name_tag(ec2_client=ec2_client, instance_id=instance_id, name_tag=new_name)
+        # if asg_message["Event"] != "autoscaling:INSTANCE_LAUNCHING":
+        #     continue
 
-    params = event.copy()
-    print(f"calling autoscaling.complete_lifecycle_action({params})")
-    try:
-        response = autoscaling.complete_lifecycle_action(**params)
-    except ClientError as e:
-        message = "Error completing lifecycle action: {}".format(e)
-        print(message)
+        instance_id = asg_message["EC2InstanceId"]
 
-    print(response)
+        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+        inst_details = response["Reservations"][0]["Instances"][0]
+        az = inst_details["Placement"]["AvailabilityZone"]
+
+        new_name = (
+            "web_" + re.sub(r"\.", "_", inst_details["PrivateIpAddress"]) + f"_{az}"
+        )
+        update_name_tag(
+            ec2_client=ec2_client, instance_id=instance_id, name_tag=new_name
+        )
+
+
+        # {
+        #     "Origin": "EC2",
+        #     "LifecycleHookName": "LaunchingHook",
+        #     "Destination": "AutoScalingGroup",
+        #     "AccountId": "458358814065",
+        #     "RequestId": "2366107c-551b-d71d-135e-b9f8fb641cf8",
+        #     "LifecycleTransition": "autoscaling:EC2_INSTANCE_LAUNCHING",
+        #     "AutoScalingGroupName": "asg-AsgStack",
+        #     "Service": "AWS Auto Scaling",
+        #     "Time": "2022-10-28T14:53:38.006Z",
+        #     "EC2InstanceId": "i-08d6b14e5da5bf390",
+        #     "LifecycleActionToken": "b8dcf032-f981-43e2-b7af-f7688405bcda"
+        # }
+
+
+        params = {
+            "LifecycleHookName": asg_message["LifecycleHookName"],
+            "AutoScalingGroupName":  asg_message["AutoScalingGroupName"],
+            "LifecycleActionToken":  asg_message["LifecycleActionToken"],
+            "LifecycleActionResult": "CONTINUE",
+            "InstanceId": asg_message["EC2InstanceId"],
+        }
+        print(f"calling autoscaling.complete_lifecycle_action({params})")
+        
+        try:
+            response = autoscaling.complete_lifecycle_action(**params)
+        except ClientError as e:
+            message = "Error completing lifecycle action: {}".format(e)
+            print(message)
+
+        print(response)
 
     # event_detail = event["detail"]
     # # NotificationMetedata stores the name of the SSM param that contains the CI metadata

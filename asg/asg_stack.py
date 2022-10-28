@@ -170,14 +170,19 @@ systemctl start httpd
             assumed_by=lambda_principal,
             managed_policies=managed_policies,
             inline_policies={
-                "complete": iam.PolicyDocument(
+                "CompleteLaunch": iam.PolicyDocument(
                     assign_sids=True,
                     statements=[
                         iam.PolicyStatement(
                             actions=["autoscaling:CompleteLifecycleAction"],
                             effect=iam.Effect.ALLOW,
                             resources=[asg.auto_scaling_group_arn],
-                        )
+                        ),
+                        iam.PolicyStatement(
+                            actions=["ec2:Describe*", "ec2:CreateTag*"],
+                            effect=iam.Effect.ALLOW,
+                            resources=["*"],
+                        ),
                     ],
                 )
             },
@@ -194,28 +199,40 @@ systemctl start httpd
             log_retention=log_retention,
         )
 
-        # asg.add_lifecycle_hook(
-        #     id="LaunchingHook",
-        #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
-        #     default_result=autoscaling.DefaultResult.ABANDON,
-        #     heartbeat_timeout=Duration.minutes(5),
-        #     lifecycle_hook_name="LaunchingHook",
-        #     notification_target=hooktargets.FunctionHook(launching_hook_lambda),
-        #     # role=asg_topic_pub_role,
+        asg.add_lifecycle_hook(
+            id="LaunchingHook",
+            lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
+            default_result=autoscaling.DefaultResult.ABANDON,
+            heartbeat_timeout=Duration.minutes(2),
+            lifecycle_hook_name="LaunchingHook",
+            notification_target=hooktargets.FunctionHook(launching_hook_lambda),
+        )
+
+        # launching_rule = events.Rule(
+        #     self,
+        #     "LaunchingHookRule",
+        #     event_pattern=events.EventPattern(
+        #         source=["aws.autoscaling"],
+        #         detail={
+        #             "LifecycleTransition": ["autoscaling:EC2_INSTANCE_LAUNCHING"],
+        #             "AutoScalingGroupName": [asg_name],
+        #         },
+        #     ),
+        #     targets=[events_targets.LambdaFunction(launching_hook_lambda)],
         # )
 
-        launching_rule = events.Rule(
-            self,
-            "LaunchingHookRule",
-            event_pattern=events.EventPattern(
-                source=["aws.autoscaling"],
-                detail={
-                    "LifecycleTransition": ["autoscaling:EC2_INSTANCE_LAUNCHING"],
-                    "AutoScalingGroupName": [asg_name],
-                },
-            ),
-            targets=[events_targets.LambdaFunction(launching_hook_lambda)],
-        )
+        # lifecycle_hook_props = autoscaling.LifecycleHookProps(
+        #     auto_scaling_group=asg,
+        #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
+
+        #     # the properties below are optional
+        #     default_result=autoscaling.DefaultResult.ABANDON,
+        #     heartbeat_timeout=Duration.minutes(3),
+        #     lifecycle_hook_name="InstanceLaunchingHook",
+        #     # notification_metadata="notificationMetadata",
+        #     notification_target=hooktargets.FunctionHook(launching_hook_lambda),
+        #     # role=role
+        # )
 
         # lifecycle_hook = autoscaling.LifecycleHook(self, "InstanceLaunchingHook",
         #     auto_scaling_group=asg,
