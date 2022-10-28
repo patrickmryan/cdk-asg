@@ -30,8 +30,11 @@ def lambda_handler(event, context):
         asg_message = json.loads(record["Sns"]["Message"])
         logger.info(json.dumps(asg_message))
 
-        # if asg_message["Event"] != "autoscaling:INSTANCE_LAUNCHING":
-        #     continue
+        asg_event = asg_message.get("LifecycleTransition", "")
+        if asg_event != "autoscaling:EC2_INSTANCE_LAUNCHING":
+            print('ignoring')
+            # ignore this. possibly a test event
+            continue
 
         instance_id = asg_message["EC2InstanceId"]
 
