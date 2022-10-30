@@ -45,6 +45,8 @@ class AsgStack(Stack):
             )
             iam.PermissionsBoundary.of(self).apply(policy)
 
+        subnet_tagging = self.node.try_get_context("SubnetTagging")
+
         self.ec2_resource = boto3.resource("ec2")
 
         # get the VPC
@@ -88,7 +90,7 @@ systemctl start httpd
         template = ec2.LaunchTemplate(
             self,
             "LaunchTemplate",
-            # block_devices)
+            # block_devices
             instance_type=ec2.InstanceType.of(
                 ec2.InstanceClass.T3, ec2.InstanceSize.MICRO
             ),
@@ -96,8 +98,6 @@ systemctl start httpd
             machine_image=ec2.AmazonLinuxImage(
                 generation=ec2.AmazonLinuxGeneration.AMAZON_LINUX_2
             ),
-            # machine_image=ec2.MachineImage.lookup("amzn2-ami-kernel-*"),
-            # filters={"image-id": "ami-09d3b3274b6c5d4aa"}
             role=instance_role,
             security_group=unrestricted_sg,
             user_data=user_data,
@@ -107,7 +107,9 @@ systemctl start httpd
         vpc_resource = self.ec2_resource.Vpc(vpc_id)
 
         subnets = self.get_subnets_tagged(
-            vpc=vpc_resource, tag_key="SubnetType", tag_value="private"
+            vpc=vpc_resource,
+            tag_key=subnet_tagging["DataSubnetKey"],
+            tag_value=subnet_tagging["DataSubnetValue"],
         )
 
         asg_name = "asg-" + self.stack_name
@@ -132,9 +134,11 @@ systemctl start httpd
         )
 
         # ALB
-        # subnets = self.get_subnets_tagged(
-        #     vpc=vpc_resource, tag_key="SubnetType", tag_value="private"
-        # )
+        subnets = self.get_subnets_tagged(
+            vpc=vpc_resource,
+            tag_key=subnet_tagging["ManagementSubnetKey"],
+            tag_value=subnet_tagging["ManagementSubnetValue"],
+        )
 
         alb = elbv2.ApplicationLoadBalancer(
             self,
@@ -181,7 +185,10 @@ systemctl start httpd
                         iam.PolicyStatement(
                             actions=["ec2:Describe*", "ec2:CreateTag*"],
                             effect=iam.Effect.ALLOW,
-                            resources=["*"],
+                            resources=[
+                                f"arn:{self.partition}:ec2:*:{self.account}:instance/*"
+                            ]
+                            # maybe add a condition to restrict this to instances in the ASG
                         ),
                     ],
                 )
@@ -260,7 +267,9 @@ systemctl start httpd
             if tags[tag_key] == tag_value:
                 subnets.append(
                     ec2.Subnet.from_subnet_id(
-                        self, "Subnet-" + subnet.subnet_id, subnet.subnet_id
+                        self,
+                        tag_key + subnet.subnet_id,
+                        subnet.subnet_id,
                     )
                 )
 
