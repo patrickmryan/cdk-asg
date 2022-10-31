@@ -115,7 +115,7 @@ systemctl start httpd
             tag_value=subnet_tagging["DataSubnetValue"],
         )
         if not subnets:
-            print("zero subnets with sifficient address space")
+            print("zero subnets with sufficient address space")
             sys.exit(1)
 
         asg_name = "asg-" + self.stack_name
