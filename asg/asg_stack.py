@@ -1,5 +1,6 @@
 import sys
 from os.path import join
+from datetime import datetime, timezone
 
 from aws_cdk import (
     Duration,
@@ -15,7 +16,7 @@ from aws_cdk import (
     aws_logs as logs,
     aws_events as events,
     aws_events_targets as events_targets,
-    custom_resources,
+    custom_resources as cr,
 )
 from constructs import Construct
 import boto3
@@ -113,6 +114,9 @@ systemctl start httpd
             tag_key=subnet_tagging["DataSubnetKey"],
             tag_value=subnet_tagging["DataSubnetValue"],
         )
+        if not subnets:
+            print("zero subnets with sifficient address space")
+            sys.exit(1)
 
         asg_name = "asg-" + self.stack_name
 
@@ -141,6 +145,9 @@ systemctl start httpd
             tag_key=subnet_tagging["ManagementSubnetKey"],
             tag_value=subnet_tagging["ManagementSubnetValue"],
         )
+        if not subnets:
+            print("zero subnets with sufficient address space")
+            sys.exit(1)
 
         alb = elbv2.ApplicationLoadBalancer(
             self,
@@ -180,18 +187,23 @@ systemctl start httpd
                     assign_sids=True,
                     statements=[
                         iam.PolicyStatement(
-                            actions=["autoscaling:CompleteLifecycleAction"],
                             effect=iam.Effect.ALLOW,
-                            resources=[asg.auto_scaling_group_arn],
+                            actions=["autoscaling:CompleteLifecycleAction"],
+                            resources=[
+                                f"arn:{self.partition}:autoscaling:{self.region}:{self.account}:autoScalingGroup:*:autoScalingGroupName/{asg_name}"
+                            ],
                         ),
                         iam.PolicyStatement(
-                            actions=["ec2:Describe*", "ec2:CreateTag*"],
                             effect=iam.Effect.ALLOW,
+                            actions=["ec2:Describe*"],
+                            resources=["*"],
+                        ),
+                        iam.PolicyStatement(
+                            effect=iam.Effect.ALLOW,
+                            actions=["ec2:CreateTags"],
                             resources=[
-                                # f"arn:{self.partition}:ec2:*:{self.account}:instance/*"
-                                "*"
-                            ]
-                            # maybe add a condition to restrict this to instances in the ASG
+                                f"arn:{self.partition}:ec2:{self.region}:{self.account}:instance/*"
+                            ],
                         ),
                     ],
                 )
@@ -217,58 +229,55 @@ systemctl start httpd
 
         # rules (target lambda)
 
-        # asg.add_lifecycle_hook(
-        #     id="LaunchingHook",
-        #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
-        #     default_result=autoscaling.DefaultResult.ABANDON,
-        #     heartbeat_timeout=Duration.minutes(2),
-        #     lifecycle_hook_name="LaunchingHook",
-        #     notification_target=hooktargets.FunctionHook(launching_hook_lambda),
-        # )
+        # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.custom_resources/AwsCustomResource.html
+        launch_hook_resource = cr.AwsCustomResource(
+            self,
+            "LaunchHookResource",
+            on_create=cr.AwsSdkCall(
+                service="AutoScaling",
+                action="putLifecycleHook",
+                parameters={
+                    "AutoScalingGroupName": asg_name,
+                    "LifecycleHookName": "InstanceLaunchingHook",
+                    "DefaultResult": "ABANDON",
+                    "HeartbeatTimeout": 180,
+                    "LifecycleTransition": "autoscaling:EC2_INSTANCE_LAUNCHING",
+                },
+                physical_resource_id=cr.PhysicalResourceId.of(
+                    datetime.now(timezone.utc).isoformat()
+                ),
+            ),
+            # on_update
+            # on_delete
+            policy=cr.AwsCustomResourcePolicy.from_statements(
+                [
+                    iam.PolicyStatement(
+                        effect=iam.Effect.ALLOW,
+                        actions=[
+                            "autoscaling:PutLifecycleHook",
+                            "autoscaling:DeleteLifecycleHook",
+                        ],
+                        resources=[asg.auto_scaling_group_arn],
+                    )
+                ]
+            ),
+        )
 
-        # launching_rule = events.Rule(
-        #     self,
-        #     "LaunchingHookRule",
-        #     event_pattern=events.EventPattern(
-        #         source=["aws.autoscaling"],
-        #         detail={
-        #             "LifecycleTransition": ["autoscaling:EC2_INSTANCE_LAUNCHING"],
-        #             "AutoScalingGroupName": [asg_name],
-        #         },
-        #     ),
-        #     targets=[events_targets.LambdaFunction(launching_hook_lambda)],
-        # )
+        launching_rule = events.Rule(
+            self,
+            "LaunchingHookRule",
+            event_pattern=events.EventPattern(
+                source=["aws.autoscaling"],
+                detail={
+                    "LifecycleTransition": ["autoscaling:EC2_INSTANCE_LAUNCHING"],
+                    "AutoScalingGroupName": [asg_name],
+                },
+            ),
+            targets=[events_targets.LambdaFunction(launching_hook_lambda)],
+        )
 
-        # lifecycle_hook_props = autoscaling.LifecycleHookProps(
-        #     auto_scaling_group=asg,
-        #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
-
-        #     # the properties below are optional
-        #     default_result=autoscaling.DefaultResult.ABANDON,
-        #     heartbeat_timeout=Duration.minutes(3),
-        #     lifecycle_hook_name="InstanceLaunchingHook",
-        #     # notification_metadata="notificationMetadata",
-        #     notification_target=hooktargets.FunctionHook(launching_hook_lambda),
-        #     # role=role
-        # )
-
-        # lifecycle_hook = autoscaling.LifecycleHook(self, "InstanceLaunchingHook",
-        #     auto_scaling_group=asg,
-        #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
-
-        #     # the properties below are optional
-        #     default_result=autoscaling.DefaultResult.ABANDON,
-        #     # heartbeat_timeout=cdk.Duration.minutes(30),
-        #     # lifecycle_hook_name="lifecycleHookName",
-        #     # notification_metadata="notificationMetadata",
-        #     notification_target=lifecycle_hook_target,
-        #     # role=role
-        # )
-
-        # make sure the rules are deploed before the ASG
-        # asg.node.add_dependency(launching_rule)
-
-        # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.aws_autoscaling/LifecycleHook.html
+        # meke sure the launching rule and lambda are created before the ASG
+        asg.node.add_dependency(launching_rule)
 
     def get_subnets_tagged(self, vpc=None, tag_key=None, tag_value=None):
 
