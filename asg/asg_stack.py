@@ -188,7 +188,8 @@ systemctl start httpd
                             actions=["ec2:Describe*", "ec2:CreateTag*"],
                             effect=iam.Effect.ALLOW,
                             resources=[
-                                f"arn:{self.partition}:ec2:*:{self.account}:instance/*"
+                                # f"arn:{self.partition}:ec2:*:{self.account}:instance/*"
+                                "*"
                             ]
                             # maybe add a condition to restrict this to instances in the ASG
                         ),
@@ -199,7 +200,7 @@ systemctl start httpd
 
         launching_hook_lambda = _lambda.Function(
             self,
-            "LaunchingHook",
+            "LaunchingHookLambda",
             runtime=runtime,
             code=_lambda.Code.from_asset(join(lambda_root, "launching_hook")),
             handler="launching_hook.lambda_handler",
@@ -211,6 +212,10 @@ systemctl start httpd
         # https://medium.com/cyberark-engineering/advanced-custom-resources-with-aws-cdk-1e024d4fb2fa
         # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk/CustomResource.html
         # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.custom_resources/Provider.html
+
+        # hook(s)
+
+        # rules (target lambda)
 
         # asg.add_lifecycle_hook(
         #     id="LaunchingHook",
@@ -270,13 +275,19 @@ systemctl start httpd
         subnets = []
         for subnet in vpc.subnets.all():
             tags = {tag["Key"]: tag["Value"] for tag in subnet.tags}  # dict-ify
-            if tags[tag_key] == tag_value:
-                subnets.append(
-                    ec2.Subnet.from_subnet_id(
-                        self,
-                        tag_key + subnet.subnet_id,
-                        subnet.subnet_id,
-                    )
+
+            if subnet.available_ip_address_count < 8:
+                continue
+
+            if tags[tag_key] != tag_value:
+                continue
+
+            subnets.append(
+                ec2.Subnet.from_subnet_id(
+                    self,
+                    tag_key + subnet.subnet_id,
+                    subnet.subnet_id,
                 )
+            )
 
         return subnets

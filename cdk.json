@@ -17,7 +17,7 @@
   "context": {
     "VpcId": "vpc-07085ed6967096e52",
     "KeyName": "pmr-iamadmin-use1",
-    "PermissionsBoundaryPolicyName": "T_PROJADMIN_U",
+    "PermissionsBoundaryPolicyName": "",
     "SubnetTagging": {
       "DataSubnetKey": "CWALL_ROLE",
       "DataSubnetValue": "ECHO",
