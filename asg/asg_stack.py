@@ -4,6 +4,7 @@ from os.path import join
 from aws_cdk import (
     Duration,
     Stack,
+    Resource,
     aws_ec2 as ec2,
     aws_iam as iam,
     aws_autoscaling as autoscaling,
@@ -14,6 +15,7 @@ from aws_cdk import (
     aws_logs as logs,
     aws_events as events,
     aws_events_targets as events_targets,
+    custom_resources,
 )
 from constructs import Construct
 import boto3
@@ -206,14 +208,18 @@ systemctl start httpd
             log_retention=log_retention,
         )
 
-        asg.add_lifecycle_hook(
-            id="LaunchingHook",
-            lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
-            default_result=autoscaling.DefaultResult.ABANDON,
-            heartbeat_timeout=Duration.minutes(2),
-            lifecycle_hook_name="LaunchingHook",
-            notification_target=hooktargets.FunctionHook(launching_hook_lambda),
-        )
+        # https://medium.com/cyberark-engineering/advanced-custom-resources-with-aws-cdk-1e024d4fb2fa
+        # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk/CustomResource.html
+        # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.custom_resources/Provider.html
+
+        # asg.add_lifecycle_hook(
+        #     id="LaunchingHook",
+        #     lifecycle_transition=autoscaling.LifecycleTransition.INSTANCE_LAUNCHING,
+        #     default_result=autoscaling.DefaultResult.ABANDON,
+        #     heartbeat_timeout=Duration.minutes(2),
+        #     lifecycle_hook_name="LaunchingHook",
+        #     notification_target=hooktargets.FunctionHook(launching_hook_lambda),
+        # )
 
         # launching_rule = events.Rule(
         #     self,
