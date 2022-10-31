@@ -1,4 +1,5 @@
 import sys
+import json
 from os.path import join
 from datetime import datetime, timezone
 
@@ -221,34 +222,42 @@ systemctl start httpd
             log_retention=log_retention,
         )
 
-        # https://medium.com/cyberark-engineering/advanced-custom-resources-with-aws-cdk-1e024d4fb2fa
-        # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk/CustomResource.html
-        # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.custom_resources/Provider.html
-
-        # hook(s)
-
-        # rules (target lambda)
-
         # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.custom_resources/AwsCustomResource.html
+
+        sdk_call = cr.AwsSdkCall(
+            service="AutoScaling",
+            action="putLifecycleHook",
+            parameters={
+                "AutoScalingGroupName": asg_name,
+                "LifecycleHookName": "InstanceLaunchingHook",
+                "DefaultResult": "ABANDON",
+                "HeartbeatTimeout": 120,
+                "LifecycleTransition": "autoscaling:EC2_INSTANCE_LAUNCHING",
+                "NotificationMetadata": json.dumps(
+                    {"message": "here is some cool metadata"}
+                ),
+            },
+            physical_resource_id=cr.PhysicalResourceId.of(
+                "PutLaunchHookSetting" + datetime.now(timezone.utc).isoformat()
+            ),
+        )
+
         launch_hook_resource = cr.AwsCustomResource(
             self,
             "LaunchHookResource",
-            on_create=cr.AwsSdkCall(
+            on_create=sdk_call,
+            on_update=sdk_call,  # update just does the same thing as create.
+            on_delete=cr.AwsSdkCall(
                 service="AutoScaling",
-                action="putLifecycleHook",
+                action="deleteLifecycleHook",
                 parameters={
                     "AutoScalingGroupName": asg_name,
                     "LifecycleHookName": "InstanceLaunchingHook",
-                    "DefaultResult": "ABANDON",
-                    "HeartbeatTimeout": 180,
-                    "LifecycleTransition": "autoscaling:EC2_INSTANCE_LAUNCHING",
                 },
                 physical_resource_id=cr.PhysicalResourceId.of(
-                    datetime.now(timezone.utc).isoformat()
+                    "DeleteLaunchHookSetting" + datetime.now(timezone.utc).isoformat()
                 ),
             ),
-            # on_update
-            # on_delete
             policy=cr.AwsCustomResourcePolicy.from_statements(
                 [
                     iam.PolicyStatement(
