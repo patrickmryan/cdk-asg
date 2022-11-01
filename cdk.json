@@ -15,14 +15,14 @@
     ]
   },
   "context": {
-    "VpcId": "vpc-07085ed6967096e52",
-    "KeyName": "pmr-iamadmin-use1",
-    "PermissionsBoundaryPolicyName": "",
+    "VpcId": "vpc-0a4848826921a0683",
+    "KeyName": "pmr-dice-useast1",
+    "PermissionsBoundaryPolicyName": "T_PROJADMIN_U",
     "SubnetTagging": {
-      "DataSubnetKey": "CWALL_ROLE",
-      "DataSubnetValue": "ECHO",
-      "ManagementSubnetKey": "CWALL_ROLE",
-      "ManagementSubnetValue": "MANAGEMENT"
+      "DataSubnetKey": "SubnetType",
+      "DataSubnetValue": "private",
+      "ManagementSubnetKey": "SubnetType",
+      "ManagementSubnetValue": "private"
     },
 
     "@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId": true,

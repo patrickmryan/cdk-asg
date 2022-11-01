@@ -114,6 +114,7 @@ systemctl start httpd
             vpc=vpc_resource,
             tag_key=subnet_tagging["DataSubnetKey"],
             tag_value=subnet_tagging["DataSubnetValue"],
+            prefix="Data",
         )
         if not subnets:
             print("zero subnets with sufficient address space")
@@ -145,6 +146,7 @@ systemctl start httpd
             vpc=vpc_resource,
             tag_key=subnet_tagging["ManagementSubnetKey"],
             tag_value=subnet_tagging["ManagementSubnetValue"],
+            prefix="Management",
         )
         if not subnets:
             print("zero subnets with sufficient address space")
@@ -288,7 +290,7 @@ systemctl start httpd
         # meke sure the launching rule and lambda are created before the ASG
         asg.node.add_dependency(launching_rule)
 
-    def get_subnets_tagged(self, vpc=None, tag_key=None, tag_value=None):
+    def get_subnets_tagged(self, vpc=None, tag_key=None, tag_value=None, prefix=""):
 
         subnets = []
         for subnet in vpc.subnets.all():
@@ -303,7 +305,7 @@ systemctl start httpd
             subnets.append(
                 ec2.Subnet.from_subnet_id(
                     self,
-                    tag_key + subnet.subnet_id,
+                    prefix + subnet.subnet_id,
                     subnet.subnet_id,
                 )
             )
