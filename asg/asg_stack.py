@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from aws_cdk import (
     Duration,
     Stack,
-    Resource,
     aws_ec2 as ec2,
     aws_iam as iam,
     aws_autoscaling as autoscaling,
@@ -61,6 +60,7 @@ class AsgStack(Stack):
 
         # security group(s)
         unrestricted_sg = ec2.SecurityGroup(self, "Unrestricted", vpc=vpc)
+        # internal_range = ec2.Peer.ipv4(vpc.vpc_cidr_block)
         unrestricted_sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(22))
         unrestricted_sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80))
 
@@ -117,7 +117,7 @@ systemctl start httpd
             prefix="Data",
         )
         if not subnets:
-            print("zero subnets with sufficient address space")
+            print("no subnets with sufficient address space")
             sys.exit(1)
 
         asg_name = "asg-" + self.stack_name
@@ -149,7 +149,7 @@ systemctl start httpd
             prefix="Management",
         )
         if not subnets:
-            print("zero subnets with sufficient address space")
+            print("no subnets with sufficient address space")
             sys.exit(1)
 
         alb = elbv2.ApplicationLoadBalancer(
@@ -162,14 +162,9 @@ systemctl start httpd
         listener = alb.add_listener(
             "Listener",
             port=80,
-            # 'open: true' is the default, you can leave it out if you want. Set it
-            # to 'false' and use `listener.connections` if you want to be selective
-            # about who can access the load balancer.
             open=True,
         )
         listener.add_targets("WebServers", port=80, targets=[asg])
-
-        # scaling topic(s)
 
         # setting for all python Lambda functions
         lambda_root = "lambdas"
@@ -287,7 +282,9 @@ systemctl start httpd
             targets=[events_targets.LambdaFunction(launching_hook_lambda)],
         )
 
-        # meke sure the launching rule and lambda are created before the ASG
+        # Make sure the launching rule and lambda are created before the ASG.
+        # Bad things can happen if the ASG starts spinning up instances before the
+        # lambdas and rules are deployed.
         asg.node.add_dependency(launching_rule)
 
     def get_subnets_tagged(self, vpc=None, tag_key=None, tag_value=None, prefix=""):
