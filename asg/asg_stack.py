@@ -1,25 +1,25 @@
-import sys
 import json
-from os.path import join
+import sys
 from datetime import datetime, timezone
+from os.path import join
 
+import boto3
 from aws_cdk import (
     Duration,
     Stack,
-    aws_ec2 as ec2,
-    aws_iam as iam,
     aws_autoscaling as autoscaling,
     aws_autoscaling_hooktargets as hooktargets,
+    aws_ec2 as ec2,
     aws_elasticloadbalancingv2 as elbv2,
     aws_elasticloadbalancingv2_targets as elbv2targets,
-    aws_lambda as _lambda,
-    aws_logs as logs,
     aws_events as events,
     aws_events_targets as events_targets,
+    aws_iam as iam,
+    aws_lambda as _lambda,
+    aws_logs as logs,
     custom_resources as cr,
 )
 from constructs import Construct
-import boto3
 
 
 class AsgStack(Stack):
@@ -320,7 +320,7 @@ systemctl start httpd
         # Make sure the launching rule and lambda are created before the ASG.
         # Bad things can happen if the ASG starts spinning up instances before the
         # lambdas and rules are deployed.
-        # asg.node.add_dependency(launching_rule)
+        asg.node.add_dependency(launching_rule)
 
         # set desired_instances AFTER the ASG, hook, lambda, and rule are all deployed.
         asg_update_resource.node.add_dependency(asg)
