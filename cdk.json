@@ -15,14 +15,16 @@
     ]
   },
   "context": {
-    "VpcId": "vpc-0a4848826921a0683",
-    "KeyName": "pmr-dice-useast1",
-    "PermissionsBoundaryPolicyName": "T_PROJADMIN_U",
+    "VpcId": "vpc-05dcfef0458eccd52",
+    "VpcName": "OpenSeawallStack/Vpc",
+    "KeyName": "pmr-iamadmin-use1",
+    "PermissionsBoundaryPolicyName": "",
+    "DesiredCapacity": 2,
     "SubnetTagging": {
-      "DataSubnetKey": "SubnetType",
-      "DataSubnetValue": "private",
-      "ManagementSubnetKey": "SubnetType",
-      "ManagementSubnetValue": "private"
+      "DataSubnetKey": "CWALL_ROLE",
+      "DataSubnetValue": "ECHO",
+      "ManagementSubnetKey": "CWALL_ROLE",
+      "ManagementSubnetValue": "MANAGEMENT"
     },
 
     "@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId": true,

@@ -49,12 +49,26 @@ class AsgStack(Stack):
             iam.PermissionsBoundary.of(self).apply(policy)
 
         subnet_tagging = self.node.try_get_context("SubnetTagging")
+        desired_capacity = self.node.try_get_context("DesiredCapacity")
+        if not desired_capacity:
+            desired_capacity = 0
 
         self.ec2_resource = boto3.resource("ec2")
 
         # get the VPC
+
         vpc_id = self.node.try_get_context("VpcId")
         vpc = ec2.Vpc.from_lookup(self, "Vpc", vpc_id=vpc_id)
+
+        # vpc_name = self.node.try_get_context("VpcName")
+        # vpc = ec2.Vpc.from_lookup(self, "Vpc", tags={"Name": vpc_name })
+
+        # if not vpc:
+        #     print(f"could not find VPC named {vpc_name}")
+        #     sys.exit(1)
+
+        # vpc_id = vpc.vpc_id
+        # print(vpc_id)
 
         key_name = self.node.try_get_context("KeyName")
 
@@ -117,10 +131,13 @@ systemctl start httpd
             prefix="Data",
         )
         if not subnets:
+            print("tag_key=" + subnet_tagging["DataSubnetKey"])
+            print("tag_value=" + subnet_tagging["DataSubnetValue"])
             print("no subnets with sufficient address space")
             sys.exit(1)
 
         asg_name = "asg-" + self.stack_name
+        asg_arn = f"arn:{self.partition}:autoscaling:{self.region}:{self.account}:autoScalingGroup:*:autoScalingGroupName/{asg_name}"
 
         # ASG
         asg = autoscaling.AutoScalingGroup(
@@ -133,6 +150,7 @@ systemctl start httpd
             # group_metrics
             # health_check
             # instance_monitoring
+            desired_capacity=0,  # use desired_capacity later!
             min_capacity=0,
             max_capacity=4,
             # notifications
@@ -187,9 +205,7 @@ systemctl start httpd
                         iam.PolicyStatement(
                             effect=iam.Effect.ALLOW,
                             actions=["autoscaling:CompleteLifecycleAction"],
-                            resources=[
-                                f"arn:{self.partition}:autoscaling:{self.region}:{self.account}:autoScalingGroup:*:autoScalingGroupName/{asg_name}"
-                            ],
+                            resources=[asg_arn],
                         ),
                         iam.PolicyStatement(
                             effect=iam.Effect.ALLOW,
@@ -221,7 +237,7 @@ systemctl start httpd
 
         # https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.custom_resources/AwsCustomResource.html
 
-        sdk_call = cr.AwsSdkCall(
+        set_launch_hook_sdk_call = cr.AwsSdkCall(
             service="AutoScaling",
             action="putLifecycleHook",
             parameters={
@@ -242,19 +258,8 @@ systemctl start httpd
         launch_hook_resource = cr.AwsCustomResource(
             self,
             "LaunchHookResource",
-            on_create=sdk_call,
-            on_update=sdk_call,  # update just does the same thing as create.
-            on_delete=cr.AwsSdkCall(
-                service="AutoScaling",
-                action="deleteLifecycleHook",
-                parameters={
-                    "AutoScalingGroupName": asg_name,
-                    "LifecycleHookName": "InstanceLaunchingHook",
-                },
-                physical_resource_id=cr.PhysicalResourceId.of(
-                    "DeleteLaunchHookSetting" + datetime.now(timezone.utc).isoformat()
-                ),
-            ),
+            on_create=set_launch_hook_sdk_call,
+            on_update=set_launch_hook_sdk_call,  # update just does the same thing as create.
             policy=cr.AwsCustomResourcePolicy.from_statements(
                 [
                     iam.PolicyStatement(
@@ -263,7 +268,37 @@ systemctl start httpd
                             "autoscaling:PutLifecycleHook",
                             "autoscaling:DeleteLifecycleHook",
                         ],
-                        resources=[asg.auto_scaling_group_arn],
+                        resources=[asg_arn],
+                    )
+                ]
+            ),
+        )
+        # the launch hook resource should not execute until AFTER the ASG been deployed
+        launch_hook_resource.node.add_dependency(asg)
+
+        set_desired_instances_sdk_call = cr.AwsSdkCall(
+            service="AutoScaling",
+            action="updateAutoScalingGroup",
+            parameters={
+                "AutoScalingGroupName": asg_name,
+                "DesiredCapacity": desired_capacity,
+            },
+            physical_resource_id=cr.PhysicalResourceId.of(
+                "PutDesiredInstancesSetting" + datetime.now(timezone.utc).isoformat()
+            ),
+        )
+
+        asg_update_resource = cr.AwsCustomResource(
+            self,
+            "DesiredInstancesResource",
+            on_create=set_desired_instances_sdk_call,
+            on_update=set_desired_instances_sdk_call,  # update just does the same thing as create.
+            policy=cr.AwsCustomResourcePolicy.from_statements(
+                [
+                    iam.PolicyStatement(
+                        effect=iam.Effect.ALLOW,
+                        actions=["autoscaling:updateAutoScalingGroup"],
+                        resources=[asg_arn],
                     )
                 ]
             ),
@@ -285,7 +320,11 @@ systemctl start httpd
         # Make sure the launching rule and lambda are created before the ASG.
         # Bad things can happen if the ASG starts spinning up instances before the
         # lambdas and rules are deployed.
-        asg.node.add_dependency(launching_rule)
+        # asg.node.add_dependency(launching_rule)
+
+        # set desired_instances AFTER the ASG, hook, lambda, and rule are all deployed.
+        asg_update_resource.node.add_dependency(asg)
+        asg_update_resource.node.add_dependency(launching_rule)
 
     def get_subnets_tagged(self, vpc=None, tag_key=None, tag_value=None, prefix=""):
 
