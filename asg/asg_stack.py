@@ -4,27 +4,27 @@ from datetime import datetime, timezone
 from os.path import join
 
 import boto3
-from aws_cdk import (
-    Duration,
-    Stack,
-    aws_autoscaling as autoscaling,
-    aws_autoscaling_hooktargets as hooktargets,
-    aws_ec2 as ec2,
-    aws_elasticloadbalancingv2 as elbv2,
-    aws_elasticloadbalancingv2_targets as elbv2targets,
-    aws_events as events,
-    aws_events_targets as events_targets,
-    aws_iam as iam,
-    aws_lambda as _lambda,
-    aws_logs as logs,
-    custom_resources as cr,
-)
+from aws_cdk import Duration, Stack
+from aws_cdk import aws_autoscaling as autoscaling
+from aws_cdk import aws_ec2 as ec2
+from aws_cdk import aws_elasticloadbalancingv2 as elbv2
+from aws_cdk import aws_events as events
+from aws_cdk import aws_events_targets as events_targets
+from aws_cdk import aws_iam as iam
+from aws_cdk import aws_lambda as _lambda
+from aws_cdk import aws_logs as logs
+from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_sns as sns
+from aws_cdk import custom_resources as cr
 from constructs import Construct
+from cdk_nag import NagSuppressions
 
 
 class AsgStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        self.iam_client = boto3.client("iam")
 
         permissions_boundary_policy_arn = self.node.try_get_context(
             "PermissionsBoundaryPolicyArn"
@@ -73,18 +73,33 @@ class AsgStack(Stack):
         key_name = self.node.try_get_context("KeyName")
 
         # security group(s)
-        unrestricted_sg = ec2.SecurityGroup(self, "Unrestricted", vpc=vpc)
-        # internal_range = ec2.Peer.ipv4(vpc.vpc_cidr_block)
-        unrestricted_sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(22))
-        unrestricted_sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80))
+        instance_sg = ec2.SecurityGroup(self, "Unrestricted", vpc=vpc)
+        internal_range = ec2.Peer.ipv4(vpc.vpc_cidr_block)
 
+        # instance_sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(22))
+        # instance_sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80))
+        instance_sg.add_ingress_rule(internal_range, ec2.Port.all_traffic())
+
+        managed_policy_names = [
+            "AmazonS3ReadOnlyAccess",
+            "AmazonSSMManagedInstanceCore",
+        ]
         # role(s)
         instance_role = iam.Role(
             self,
             "InstanceRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
+            # inline_policies={
+            #     policy_name: self.clone_managed_policy(policy_name)
+            #     for policy_name in managed_policy_names
+            # },
             managed_policies=[
-                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonS3ReadOnlyAccess")
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "AmazonS3ReadOnlyAccess"
+                ),
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "AmazonSSMManagedInstanceCore"
+                ),
             ],
         )
 
@@ -117,7 +132,7 @@ systemctl start httpd
                 generation=ec2.AmazonLinuxGeneration.AMAZON_LINUX_2
             ),
             role=instance_role,
-            security_group=unrestricted_sg,
+            security_group=instance_sg,
             user_data=user_data,
         )
 
@@ -139,6 +154,15 @@ systemctl start httpd
         asg_name = "asg-" + self.stack_name
         asg_arn = f"arn:{self.partition}:autoscaling:{self.region}:{self.account}:autoScalingGroup:*:autoScalingGroupName/{asg_name}"
 
+        scaling_topic = sns.Topic(self, "AsgScalingTopic")
+        NagSuppressions.add_resource_suppressions(
+            scaling_topic,
+            [
+                {"id": "AwsSolutions-SNS2", "reason": "ignoring.."},
+                {"id": "AwsSolutions-SNS3", "reason": "ignoring.."},
+            ],
+        )
+
         # ASG
         asg = autoscaling.AutoScalingGroup(
             self,
@@ -150,10 +174,10 @@ systemctl start httpd
             # group_metrics
             # health_check
             # instance_monitoring
-            desired_capacity=0,  # use desired_capacity later!
+            # desired_capacity=0,  # use desired_capacity later!
             min_capacity=0,
             max_capacity=4,
-            # notifications
+            notifications=[autoscaling.NotificationConfiguration(topic=scaling_topic)],
             # termination_policies
             # update_policy
             vpc_subnets=ec2.SubnetSelection(subnets=subnets),
@@ -170,6 +194,18 @@ systemctl start httpd
             print("no subnets with sufficient address space")
             sys.exit(1)
 
+        access_logs_bucket = s3.Bucket(
+            self,
+            "AlbLogsBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            enforce_ssl=True,
+            encryption=s3.BucketEncryption.KMS,
+        )
+        NagSuppressions.add_resource_suppressions(
+            access_logs_bucket,
+            [{"id": "AwsSolutions-S1", "reason": "do not need access logs"}],
+        )
+
         alb = elbv2.ApplicationLoadBalancer(
             self,
             "ALB",
@@ -177,6 +213,8 @@ systemctl start httpd
             vpc_subnets=ec2.SubnetSelection(subnets=subnets),
             internet_facing=False,
         )
+        alb.log_access_logs(access_logs_bucket)
+
         listener = alb.add_listener(
             "Listener",
             port=80,
@@ -192,6 +230,36 @@ systemctl start httpd
         basic_lambda_policy = iam.ManagedPolicy.from_aws_managed_policy_name(
             "service-role/AWSLambdaBasicExecutionRole"
         )
+
+        acct_lambdas_arn = self.format_arn(
+            partition=self.partition,
+            service="lambda",
+            region=self.region,
+            account=self.account,
+            resource="function",
+            resource_name="*",
+        )
+
+        NagSuppressions.add_resource_suppressions(
+            self,
+            [
+                {
+                    "id": "AwsSolutions-L1",
+                    "reason": "using python 3.9",
+                    "appliesTo": [acct_lambdas_arn],
+                }
+            ],
+        )
+
+        acct_instances_arn = self.format_arn(
+            partition=self.partition,
+            service="ec2",
+            region=self.region,
+            account=self.account,
+            resource="instance",
+            resource_name="*",
+        )
+
         managed_policies = [basic_lambda_policy]
         lambda_role = iam.Role(
             self,
@@ -210,14 +278,12 @@ systemctl start httpd
                         iam.PolicyStatement(
                             effect=iam.Effect.ALLOW,
                             actions=["ec2:Describe*"],
-                            resources=["*"],
+                            resources=[acct_instances_arn],
                         ),
                         iam.PolicyStatement(
                             effect=iam.Effect.ALLOW,
                             actions=["ec2:CreateTags"],
-                            resources=[
-                                f"arn:{self.partition}:ec2:{self.region}:{self.account}:instance/*"
-                            ],
+                            resources=[acct_instances_arn],
                         ),
                     ],
                 )
@@ -347,3 +413,58 @@ systemctl start httpd
             )
 
         return subnets
+
+    def clone_managed_policy(self, managed_policy_name, resource_id=""):
+        # Take an AWS-manager policy and create a new policy that
+        # is (almost) a clone of it. Change the occurences of
+        # "Resource": "*" to an ARN string that is limited to
+        # this account and partition.
+
+        aws_policy_arn = "arn:aws:iam::aws:policy/" + managed_policy_name
+
+        try:
+            response = self.iam_client.get_policy(PolicyArn=aws_policy_arn)
+        except Exception as e:
+            if "NoSuchEntity" in str(e):
+                print("could not find policy " + aws_policy_arn)
+                return None
+
+        version_id = response["Policy"]["DefaultVersionId"]
+
+        response = self.iam_client.get_policy_version(
+            PolicyArn=aws_policy_arn, VersionId=version_id
+        )
+        policy_version = response["PolicyVersion"]
+
+        statement = policy_version["Document"]["Statement"]
+        version = policy_version["Document"]["Version"]
+
+        account_resources_arn = self.format_arn(
+            partition=self.partition, service="*", account=self.account, resource="*"
+        )
+
+        scoped_statement = []
+        for clause in statement:
+            new_clause = clause.copy()
+            if clause["Resource"] == "*":
+                new_clause["Resource"] = account_resources_arn
+            scoped_statement.append(new_clause)
+
+        existing_path = managed_policy_name.split("/")
+        # new_policy_name = existing_path[-1]
+        new_policy_path = "/"
+        for elem in existing_path:  # [0 : len(existing_path) - 1]:
+            new_policy_path = f"{new_policy_path}{elem}/"
+
+        new_policy = {"Version": version, "Statement": scoped_statement}
+
+        # print(json.dumps(new_policy, indent=2))
+
+        return iam.PolicyDocument.from_json(new_policy)
+
+        # cloned_policy = iam.Policy(self,
+        #     # resource_id,
+        #     managed_policy_name,
+        #     document=iam.PolicyDocument.from_json(new_policy))
+
+        # return cloned_policy
