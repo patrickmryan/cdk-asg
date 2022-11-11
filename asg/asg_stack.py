@@ -72,6 +72,14 @@ class AsgStack(Stack):
 
         key_name = self.node.try_get_context("KeyName")
 
+        NagSuppressions.add_stack_suppressions(
+            self,
+            [
+                {"id": "AwsSolutions-IAM4", "reason": "ignoring..."},
+                {"id": "AwsSolutions-IAM5", "reason": "ignoring..."},
+            ],
+        )
+
         # security group(s)
         instance_sg = ec2.SecurityGroup(self, "Unrestricted", vpc=vpc)
         internal_range = ec2.Peer.ipv4(vpc.vpc_cidr_block)
@@ -80,10 +88,10 @@ class AsgStack(Stack):
         # instance_sg.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80))
         instance_sg.add_ingress_rule(internal_range, ec2.Port.all_traffic())
 
-        managed_policy_names = [
-            "AmazonS3ReadOnlyAccess",
-            "AmazonSSMManagedInstanceCore",
-        ]
+        # managed_policy_names = [
+        #     "AmazonS3ReadOnlyAccess",
+        #     "AmazonSSMManagedInstanceCore",
+        # ]
         # role(s)
         instance_role = iam.Role(
             self,
@@ -194,17 +202,25 @@ systemctl start httpd
             print("no subnets with sufficient address space")
             sys.exit(1)
 
-        access_logs_bucket = s3.Bucket(
-            self,
-            "AlbLogsBucket",
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            enforce_ssl=True,
-            encryption=s3.BucketEncryption.KMS,
-        )
-        NagSuppressions.add_resource_suppressions(
-            access_logs_bucket,
-            [{"id": "AwsSolutions-S1", "reason": "do not need access logs"}],
-        )
+        # access_logs_bucket = s3.Bucket(
+        #     self,
+        #     "AlbLogsBucket",
+        #     block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+        #     enforce_ssl=True,
+        #     encryption=s3.BucketEncryption.KMS,
+        # )
+        # NagSuppressions.add_resource_suppressions(
+        #     access_logs_bucket,
+        #     [
+        #         {"id": "AwsSolutions-S1", "reason": "do not need access logs"},
+        #     ],
+        # )
+        # NagSuppressions.add_stack_suppressions(
+        #     self,
+        #     [
+        #         {"id": "AwsSolutions-KMS5", "reason": "do not need access logs"},
+        #     ],
+        # )
 
         alb = elbv2.ApplicationLoadBalancer(
             self,
@@ -213,7 +229,8 @@ systemctl start httpd
             vpc_subnets=ec2.SubnetSelection(subnets=subnets),
             internet_facing=False,
         )
-        alb.log_access_logs(access_logs_bucket)
+        # alb.log_access_logs(access_logs_bucket)
+        # access_logs_bucket.grant_put(alb)
 
         listener = alb.add_listener(
             "Listener",
@@ -221,6 +238,13 @@ systemctl start httpd
             open=True,
         )
         listener.add_targets("WebServers", port=80, targets=[asg])
+
+        NagSuppressions.add_stack_suppressions(
+            self,
+            [
+                {"id": "AwsSolutions-EC23", "reason": "trusting internal traffic"},
+            ],
+        )
 
         # setting for all python Lambda functions
         lambda_root = "lambdas"
@@ -240,13 +264,13 @@ systemctl start httpd
             resource_name="*",
         )
 
-        NagSuppressions.add_resource_suppressions(
+        NagSuppressions.add_stack_suppressions(
             self,
             [
                 {
                     "id": "AwsSolutions-L1",
                     "reason": "using python 3.9",
-                    "appliesTo": [acct_lambdas_arn],
+                    # "appliesTo": [acct_lambdas_arn],
                 }
             ],
         )
@@ -278,7 +302,7 @@ systemctl start httpd
                         iam.PolicyStatement(
                             effect=iam.Effect.ALLOW,
                             actions=["ec2:Describe*"],
-                            resources=[acct_instances_arn],
+                            resources=["*"],
                         ),
                         iam.PolicyStatement(
                             effect=iam.Effect.ALLOW,

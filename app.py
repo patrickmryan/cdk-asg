@@ -9,6 +9,6 @@ env = cdk.Environment(
 
 app = cdk.App()
 AsgStack(app, "AsgStack", env=env)
-cdk.Aspects.of(app).add(AwsSolutionsChecks())
+# cdk.Aspects.of(app).add(AwsSolutionsChecks())
 
 app.synth()
