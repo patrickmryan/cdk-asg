@@ -301,7 +301,7 @@ systemctl start httpd
                         ),
                         iam.PolicyStatement(
                             effect=iam.Effect.ALLOW,
-                            actions=["ec2:Describe*"],
+                            actions=["ec2:DescribeInstances"],
                             resources=["*"],
                         ),
                         iam.PolicyStatement(
