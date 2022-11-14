@@ -4,18 +4,22 @@ from datetime import datetime, timezone
 from os.path import join
 
 import boto3
-from aws_cdk import Duration, Stack
-from aws_cdk import aws_autoscaling as autoscaling
-from aws_cdk import aws_ec2 as ec2
-from aws_cdk import aws_elasticloadbalancingv2 as elbv2
-from aws_cdk import aws_events as events
-from aws_cdk import aws_events_targets as events_targets
-from aws_cdk import aws_iam as iam
-from aws_cdk import aws_lambda as _lambda
-from aws_cdk import aws_logs as logs
-from aws_cdk import aws_s3 as s3
-from aws_cdk import aws_sns as sns
-from aws_cdk import custom_resources as cr
+from aws_cdk import (
+    Duration,
+    Stack,
+    CfnOutput,
+    aws_autoscaling as autoscaling,
+    aws_ec2 as ec2,
+    aws_elasticloadbalancingv2 as elbv2,
+    aws_events as events,
+    aws_events_targets as events_targets,
+    aws_iam as iam,
+    aws_lambda as _lambda,
+    aws_logs as logs,
+    aws_s3 as s3,
+    aws_sns as sns,
+    custom_resources as cr,
+)
 from constructs import Construct
 from cdk_nag import NagSuppressions
 
@@ -182,7 +186,7 @@ systemctl start httpd
             # group_metrics
             # health_check
             # instance_monitoring
-            # desired_capacity=0,  # use desired_capacity later!
+            desired_capacity=0,  # use desired_capacity later!
             min_capacity=0,
             max_capacity=4,
             notifications=[autoscaling.NotificationConfiguration(topic=scaling_topic)],
@@ -415,6 +419,8 @@ systemctl start httpd
         # set desired_instances AFTER the ASG, hook, lambda, and rule are all deployed.
         asg_update_resource.node.add_dependency(asg)
         asg_update_resource.node.add_dependency(launching_rule)
+
+        CfnOutput(self, "AlbUrl", value="http://" + alb.load_balancer_dns_name)
 
     def get_subnets_tagged(self, vpc=None, tag_key=None, tag_value=None, prefix=""):
 
