@@ -186,7 +186,7 @@ systemctl start httpd
             # group_metrics
             # health_check
             # instance_monitoring
-            desired_capacity=0,  # use desired_capacity later!
+            # desired_capacity=0,  # use desired_capacity later!
             min_capacity=0,
             max_capacity=4,
             notifications=[autoscaling.NotificationConfiguration(topic=scaling_topic)],
@@ -201,6 +201,7 @@ systemctl start httpd
             tag_key=subnet_tagging["ManagementSubnetKey"],
             tag_value=subnet_tagging["ManagementSubnetValue"],
             prefix="Management",
+            minimum_free_addresses=8,
         )
         if not subnets:
             print("no subnets with sufficient address space")
@@ -345,7 +346,8 @@ systemctl start httpd
                 ),
             },
             physical_resource_id=cr.PhysicalResourceId.of(
-                "PutLaunchHookSetting" + datetime.now(timezone.utc).isoformat()
+                "PutInstanceLaunchingHookSetting"
+                + datetime.now(timezone.utc).isoformat()
             ),
         )
 
@@ -354,6 +356,7 @@ systemctl start httpd
             "LaunchHookResource",
             on_create=set_launch_hook_sdk_call,
             on_update=set_launch_hook_sdk_call,  # update just does the same thing as create.
+            # on_delete   not implemented
             policy=cr.AwsCustomResourcePolicy.from_statements(
                 [
                     iam.PolicyStatement(
@@ -367,8 +370,6 @@ systemctl start httpd
                 ]
             ),
         )
-        # the launch hook resource should not execute until AFTER the ASG been deployed
-        launch_hook_resource.node.add_dependency(asg)
 
         set_desired_instances_sdk_call = cr.AwsSdkCall(
             service="AutoScaling",
@@ -416,19 +417,27 @@ systemctl start httpd
         # lambdas and rules are deployed.
         asg.node.add_dependency(launching_rule)
 
+        # the launch hook resource should not execute until AFTER the ASG been deployed
+        launch_hook_resource.node.add_dependency(asg)
+
         # set desired_instances AFTER the ASG, hook, lambda, and rule are all deployed.
         asg_update_resource.node.add_dependency(asg)
         asg_update_resource.node.add_dependency(launching_rule)
 
-        CfnOutput(self, "AlbUrl", value="http://" + alb.load_balancer_dns_name)
-
-    def get_subnets_tagged(self, vpc=None, tag_key=None, tag_value=None, prefix=""):
+    def get_subnets_tagged(
+        self,
+        vpc=None,
+        tag_key=None,
+        tag_value=None,
+        prefix="",
+        minimum_free_addresses=0,
+    ):
 
         subnets = []
         for subnet in vpc.subnets.all():
             tags = {tag["Key"]: tag["Value"] for tag in subnet.tags}  # dict-ify
 
-            if subnet.available_ip_address_count < 8:
+            if subnet.available_ip_address_count < minimum_free_addresses:
                 continue
 
             if tags[tag_key] != tag_value:
